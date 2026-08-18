@@ -374,7 +374,7 @@ async function testConnection(silent){
   }
   try{
     const res = await fetch(`${url}/rest/v1/segmentos?select=id,nome,emoji&order=nome`, {
-      headers: { 'apikey': key, 'Authorization': `Bearer ${key}` }
+      headers: { 'apikey': key }
     });
     if(!res.ok){
       const t = await res.text();
