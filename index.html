@@ -118,10 +118,33 @@
       <div class="status" id="configStatus"></div>
 
       <div class="schema-note">
-        ⚠️ RLS está desativado nas suas tabelas — a anon key tem acesso total de leitura/escrita. Ok pra uso pessoal seu, mas ative RLS com policies antes de expor o bot público pra clientes.
+        🔒 RLS está ativo: leitura é pública, mas criar/editar/apagar exige login (abaixo).
       </div>
     </div>
   </section>
+
+  <section class="card" id="loginCard">
+    <h2><span class="dot" style="background:var(--ok)"></span>Login</h2>
+    <div class="sec-hint">Entre com sua conta de admin (criada no Supabase Authentication) pra liberar a edição.</div>
+
+    <label for="loginEmail">E-mail</label>
+    <input type="text" id="loginEmail" placeholder="voce@exemplo.com">
+
+    <label for="loginSenha">Senha</label>
+    <input type="password" id="loginSenha" placeholder="••••••••">
+
+    <div style="display:flex; gap:10px; margin-top:14px;">
+      <button type="button" class="primary" id="loginBtn">Entrar</button>
+    </div>
+    <div class="status" id="loginStatus"></div>
+  </section>
+
+  <div id="userBar" style="display:none; justify-content:space-between; align-items:center; margin:0 0 14px;">
+    <span class="hint" id="userEmailLabel"></span>
+    <button type="button" class="secondary" id="logoutBtn">Sair</button>
+  </div>
+
+  <div id="appSections" style="display:none">
 
   <section class="card">
     <h2><span class="dot" style="background:var(--accent)"></span>Dados do estabelecimento</h2>
@@ -199,6 +222,8 @@
   <button type="button" class="primary" id="submitBtn">Salvar estabelecimento no Supabase</button>
   <div class="status" id="submitStatus"></div>
 
+  </div>
+
 </main>
 
 <footer>
@@ -219,12 +244,12 @@ configToggle.addEventListener('click', () => {
 
 async function loadConfig(){
   try{
-    const url = await window.storage.get('supa_url');
-    const key = await window.storage.get('supa_key');
-    const bucket = await window.storage.get('supa_bucket');
-    if(url) document.getElementById('supaUrl').value = url.value;
-    if(key) document.getElementById('supaKey').value = key.value;
-    if(bucket) document.getElementById('supaBucket').value = bucket.value;
+    const url = localStorage.getItem('supa_url');
+    const key = localStorage.getItem('supa_key');
+    const bucket = localStorage.getItem('supa_bucket');
+    if(url) document.getElementById('supaUrl').value = url;
+    if(key) document.getElementById('supaKey').value = key;
+    if(bucket) document.getElementById('supaBucket').value = bucket;
     if(url && key){
       configBody.classList.remove('open');
       testConnection(true);
@@ -243,13 +268,86 @@ document.getElementById('saveConfig').addEventListener('click', async () => {
   const key = document.getElementById('supaKey').value.trim();
   const bucket = document.getElementById('supaBucket').value.trim();
   try{
-    await window.storage.set('supa_url', url);
-    await window.storage.set('supa_key', key);
-    await window.storage.set('supa_bucket', bucket);
+    localStorage.setItem('supa_url', url);
+    localStorage.setItem('supa_key', key);
+    localStorage.setItem('supa_bucket', bucket);
     showStatus('configStatus', 'ok', 'Credenciais salvas no navegador.');
   }catch(e){
     showStatus('configStatus', 'err', 'Erro ao salvar: ' + e.message);
   }
+});
+
+// ---------- Login (Supabase Auth) ----------
+let session = null;
+
+function saveSession(s){
+  localStorage.setItem('supa_session', JSON.stringify(s));
+  session = s;
+}
+function loadSession(){
+  try{
+    const raw = localStorage.getItem('supa_session');
+    if(raw){
+      const s = JSON.parse(raw);
+      if(s && s.access_token) session = s;
+    }
+  }catch(e){ session = null; }
+}
+function clearSession(){
+  localStorage.removeItem('supa_session');
+  session = null;
+}
+function showApp(){
+  document.getElementById('loginCard').style.display = 'none';
+  document.getElementById('appSections').style.display = '';
+  document.getElementById('userBar').style.display = 'flex';
+  document.getElementById('userEmailLabel').textContent = session && session.email ? session.email : '';
+}
+function showLogin(){
+  document.getElementById('loginCard').style.display = '';
+  document.getElementById('appSections').style.display = 'none';
+  document.getElementById('userBar').style.display = 'none';
+}
+
+document.getElementById('loginBtn').addEventListener('click', async () => {
+  const creds = getCreds();
+  const email = document.getElementById('loginEmail').value.trim();
+  const senha = document.getElementById('loginSenha').value;
+  if(!creds.url || !creds.key){
+    showStatus('loginStatus', 'err', 'Configure a URL e a chave (anon) do Supabase aqui em cima primeiro.');
+    return;
+  }
+  if(!email || !senha){
+    showStatus('loginStatus', 'err', 'Preencha e-mail e senha.');
+    return;
+  }
+  try{
+    const res = await fetch(`${creds.url}/auth/v1/token?grant_type=password`, {
+      method: 'POST',
+      headers: { 'apikey': creds.key, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password: senha })
+    });
+    const data = await res.json();
+    if(!res.ok){
+      showStatus('loginStatus', 'err', data.error_description || data.msg || 'Login inválido.');
+      return;
+    }
+    saveSession({
+      access_token: data.access_token,
+      refresh_token: data.refresh_token,
+      expires_at: Date.now() + (data.expires_in * 1000),
+      email
+    });
+    showStatus('loginStatus', 'ok', 'Login ok!');
+    showApp();
+  }catch(e){
+    showStatus('loginStatus', 'err', 'Erro: ' + e.message);
+  }
+});
+
+document.getElementById('logoutBtn').addEventListener('click', () => {
+  clearSession();
+  showLogin();
 });
 
 document.getElementById('testConn').addEventListener('click', () => testConnection(false));
@@ -408,7 +506,7 @@ async function uploadImage(file, creds){
     method: 'POST',
     headers: {
       'apikey': creds.key,
-      'Authorization': `Bearer ${creds.key}`,
+      'Authorization': `Bearer ${session.access_token}`,
       'Content-Type': file.type || 'application/octet-stream'
     },
     body: file
@@ -457,7 +555,7 @@ document.getElementById('submitBtn').addEventListener('click', async () => {
       method: 'POST',
       headers: {
         'apikey': creds.key,
-        'Authorization': `Bearer ${creds.key}`,
+        'Authorization': `Bearer ${session.access_token}`,
         'Content-Type': 'application/json',
         'Prefer': 'return=representation'
       },
@@ -480,7 +578,7 @@ document.getElementById('submitBtn').addEventListener('click', async () => {
     if(telefones.length){
       const r = await fetch(`${creds.url}/rest/v1/telefones`, {
         method: 'POST',
-        headers: { 'apikey': creds.key, 'Authorization': `Bearer ${creds.key}`, 'Content-Type': 'application/json' },
+        headers: { 'apikey': creds.key, 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(telefones)
       });
       if(!r.ok){ const t = await r.text(); throw new Error(`Erro ao salvar telefones: ${t.slice(0,200)}`); }
@@ -496,7 +594,7 @@ document.getElementById('submitBtn').addEventListener('click', async () => {
     if(links.length){
       const r = await fetch(`${creds.url}/rest/v1/links`, {
         method: 'POST',
-        headers: { 'apikey': creds.key, 'Authorization': `Bearer ${creds.key}`, 'Content-Type': 'application/json' },
+        headers: { 'apikey': creds.key, 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(links)
       });
       if(!r.ok){ const t = await r.text(); throw new Error(`Erro ao salvar links: ${t.slice(0,200)}`); }
@@ -522,7 +620,7 @@ document.getElementById('submitBtn').addEventListener('click', async () => {
     if(imagens.length){
       const r = await fetch(`${creds.url}/rest/v1/imagens`, {
         method: 'POST',
-        headers: { 'apikey': creds.key, 'Authorization': `Bearer ${creds.key}`, 'Content-Type': 'application/json' },
+        headers: { 'apikey': creds.key, 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(imagens)
       });
       if(!r.ok){ const t = await r.text(); throw new Error(`Erro ao salvar imagens: ${t.slice(0,200)}`); }
@@ -551,7 +649,7 @@ document.getElementById('submitBtn').addEventListener('click', async () => {
     if(horarios.length){
       const r = await fetch(`${creds.url}/rest/v1/horarios`, {
         method: 'POST',
-        headers: { 'apikey': creds.key, 'Authorization': `Bearer ${creds.key}`, 'Content-Type': 'application/json' },
+        headers: { 'apikey': creds.key, 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(horarios)
       });
       if(!r.ok){ const t = await r.text(); throw new Error(`Erro ao salvar horários: ${t.slice(0,200)}`); }
@@ -583,6 +681,8 @@ document.getElementById('submitBtn').addEventListener('click', async () => {
 });
 
 loadConfig();
+loadSession();
+if(session && session.access_token){ showApp(); } else { showLogin(); }
 renderHorarios();
 </script>
 
