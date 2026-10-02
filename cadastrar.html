@@ -95,7 +95,7 @@
 
 <main>
 
-  <section class="card">
+  <section class="card" style="display:none">
     <div class="config-toggle" id="configToggle">
       <h2 style="margin:0"><span class="dot" style="background:var(--accent)"></span>Configuração da conexão</h2>
       <button type="button" class="secondary" id="configArrow">editar ▾</button>
@@ -250,25 +250,14 @@ configToggle.addEventListener('click', () => {
   configArrow.textContent = configBody.classList.contains('open') ? 'fechar ▴' : 'editar ▾';
 });
 
+const SUPA_URL = 'https://pgjtoshuznaujwxvfglc.supabase.co';
+const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBnanRvc2h1em5hdWp3eHZmZ2xjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUyOTIzMjMsImV4cCI6MjEwMDg2ODMyM30.9MI94pCkqQsSUx5auyKFuomSx4o5NG1saaZoHYglTEQ';
+const SUPA_BUCKET = 'graham-tell';
+
 async function loadConfig(){
-  try{
-    const url = localStorage.getItem('supa_url');
-    const key = localStorage.getItem('supa_key');
-    const bucket = localStorage.getItem('supa_bucket');
-    if(url) document.getElementById('supaUrl').value = url;
-    if(key) document.getElementById('supaKey').value = key;
-    if(bucket) document.getElementById('supaBucket').value = bucket;
-    if(url && key){
-      configBody.classList.remove('open');
-      testConnection(true);
-    } else {
-      configBody.classList.add('open');
-      configArrow.textContent = 'fechar ▴';
-    }
-  }catch(e){
-    configBody.classList.add('open');
-    configArrow.textContent = 'fechar ▴';
-  }
+  document.getElementById('supaUrl').value = SUPA_URL;
+  document.getElementById('supaKey').value = SUPA_KEY;
+  document.getElementById('supaBucket').value = SUPA_BUCKET;
 }
 
 document.getElementById('saveConfig').addEventListener('click', async () => {
@@ -300,6 +289,36 @@ function loadSession(){
       if(s && s.access_token) session = s;
     }
   }catch(e){ session = null; }
+}
+let refreshing = null;
+async function ensureSession(){
+  if(!session) return false;
+  if(session.expires_at && session.expires_at - Date.now() > 120000) return true;
+  if(refreshing) return refreshing;
+  refreshing = (async () => {
+    try{
+      const creds = getCreds();
+      const res = await fetch(`${creds.url}/auth/v1/token?grant_type=refresh_token`, {
+        method: 'POST',
+        headers: { 'apikey': creds.key, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: session.refresh_token })
+      });
+      const data = await res.json();
+      if(!res.ok){
+        if(res.status >= 400 && res.status < 500){ clearSession(); showLogin(); }
+        return false;
+      }
+      saveSession({
+        access_token: data.access_token,
+        refresh_token: data.refresh_token,
+        expires_at: Date.now() + (data.expires_in * 1000),
+        email: session.email
+      });
+      return true;
+    }catch(e){ return false; }
+    finally{ refreshing = null; }
+  })();
+  return refreshing;
 }
 function clearSession(){
   localStorage.removeItem('supa_session');
@@ -545,6 +564,12 @@ document.getElementById('submitBtn').addEventListener('click', async () => {
     return;
   }
 
+  await ensureSession();
+  if(!session){
+    showStatus('submitStatus', 'err', 'Sua sessão terminou. Entre de novo com e-mail e senha.');
+    return;
+  }
+
   btn.disabled = true;
   showStatus('submitStatus', 'info', 'Salvando...');
 
@@ -707,7 +732,9 @@ document.getElementById('submitBtn').addEventListener('click', async () => {
 
 loadConfig();
 loadSession();
-if(session && session.access_token){ showApp(); } else { showLogin(); }
+if(session && session.access_token){ showApp(); ensureSession(); } else { showLogin(); }
+setInterval(ensureSession, 5 * 60 * 1000);
+document.addEventListener('visibilitychange', () => { if(!document.hidden) ensureSession(); });
 renderHorarios();
 </script>
 
