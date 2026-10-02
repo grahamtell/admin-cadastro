@@ -157,6 +157,14 @@
       <option value="">Carregando segmentos... (teste a conexão acima)</option>
     </select>
 
+    <label for="plano">Plano</label>
+    <select id="plano">
+      <option value="">Selecione...</option>
+      <option value="Teste">Teste</option>
+      <option value="Pago">Pago</option>
+      <option value="Não pago">Não pago</option>
+    </select>
+
     <div class="two-col">
       <div>
         <label for="bairro">Bairro</label>
@@ -532,6 +540,11 @@ document.getElementById('submitBtn').addEventListener('click', async () => {
     return;
   }
 
+  if(!document.getElementById('plano').value){
+    showStatus('submitStatus', 'err', 'Escolha o plano (Teste, Pago ou Não pago).');
+    return;
+  }
+
   btn.disabled = true;
   showStatus('submitStatus', 'info', 'Salvando...');
 
@@ -541,7 +554,7 @@ document.getElementById('submitBtn').addEventListener('click', async () => {
     const lng = document.getElementById('longitude').value.trim();
     const payload = {
       nome,
-      segmento_id: document.getElementById('segmento').value || null,
+      plano: document.getElementById('plano').value,
       bairro: document.getElementById('bairro').value.trim() || null,
       endereco: document.getElementById('endereco').value.trim() || null,
       cidade: document.getElementById('cidade').value.trim() || null,
@@ -567,6 +580,17 @@ document.getElementById('submitBtn').addEventListener('click', async () => {
     }
     const estData = await estRes.json();
     const estId = estData[0].id;
+
+    // 1b. Segmento (tabela de ligação)
+    const segId = document.getElementById('segmento').value;
+    if(segId){
+      const rs = await fetch(`${creds.url}/rest/v1/estabelecimento_segmentos`, {
+        method: 'POST',
+        headers: { 'apikey': creds.key, 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ estabelecimento_id: estId, segmento_id: segId })
+      });
+      if(!rs.ok){ const t = await rs.text(); throw new Error(`Erro ao salvar segmento: ${t.slice(0,200)}`); }
+    }
 
     // 2. Telefones
     const telefones = Array.from(document.querySelectorAll('#telefonesList .row-item')).map(row => ({
@@ -659,6 +683,7 @@ document.getElementById('submitBtn').addEventListener('click', async () => {
 
     // reset form fields (keep config)
     document.getElementById('nome').value = '';
+    document.getElementById('plano').value = '';
     document.getElementById('bairro').value = '';
     document.getElementById('endereco').value = '';
     document.getElementById('cep').value = '';
